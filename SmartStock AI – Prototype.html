@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SmartStock AI – Prototype</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1d2330;--mu:#667085;--bd:#e3e6ec;--ac:#2f6f5e;--ok:#1f8a4c;--lo:#b7791f;--bad:#c0392b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#14181f;--card:#1d232c;--tx:#e8ebf0;--mu:#98a2b3;--bd:#2d3542;--ac:#5cc4a6;--ok:#4cc27d;--lo:#e0a84a;--bad:#ef6b5c;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{padding:14px 18px;border-bottom:1px solid var(--bd);background:var(--card)}
+h1{font-size:20px;margin:0}h2{font-size:16px;margin:0 0 8px}small,.mu{color:var(--mu)}
+.demo{display:inline-block;background:#fff3cd;color:#7a5b00;border-radius:6px;padding:2px 8px;font-size:12px;margin-top:4px}
+nav{display:flex;gap:6px;overflow-x:auto;padding:10px 14px}nav button{white-space:nowrap}
+button,select,input{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:6px 10px}
+button{cursor:pointer}button.on,button.pri{background:var(--ac);color:#fff;border-color:var(--ac)}
+main{padding:0 14px 24px;max-width:1000px;margin:auto}section{display:none}section.show{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+.grid .card{margin:0}.big{font-size:26px;font-weight:700}
+.sc{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}
+td input{width:70px}.tag{border-radius:6px;padding:1px 8px;font-size:12px;color:#fff}
+.Sufficient{background:var(--ok)}.Low{background:var(--lo)}.Shortage{background:var(--bad)}
+.warn{background:#fff3cd;color:#7a5b00;border-radius:8px;padding:8px 10px;margin:8px 0}.err{background:#fde2e0;color:#8a1f14}.okm{background:#dff3e6;color:#145a30}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.bar{height:10px;background:var(--bd);border-radius:5px;overflow:hidden}.bar i{display:block;height:100%}
+svg{width:100%;height:auto}li{margin:4px 0}pre{white-space:pre-wrap;margin:0}
+</style></head><body>
+<header><h1>SmartStock AI</h1><small>Demand forecasting &amp; inventory assistant for small food businesses</small><br>
+<span class="demo" id="demoTag">Illustrative demo data – not real business data</span></header>
+<nav id="nav"></nav>
+<main>
+<section id="s-dash"></section>
+<section id="s-data">
+ <div class="card"><h2>Enter daily sales</h2><div class="row"><input type="date" id="fd"><span id="fi"></span><button class="pri" onclick="addDay()">Add / update day</button></div><div id="msg"></div></div>
+ <div class="card"><h2>Upload CSV</h2><p class="mu">Long format <code>date,item,quantity</code> or wide format <code>date,Iced Coffee,Croissant,Sandwich</code>. Use anonymized or synthetic data only.</p><div class="row"><input type="file" id="csv" accept=".csv,text/csv"><button onclick="sampleCSV()">View CSV example</button></div><pre id="ex" class="mu"></pre></div>
+ <div class="card sc"><h2>Sales history</h2><div id="hist"></div></div>
+</section>
+<section id="s-fc"></section>
+<section id="s-inv"></section>
+<section id="s-rec"></section>
+<section id="s-test">
+ <div class="card"><h2>Testing mode</h2><p class="mu">Edit sales history and current inventory below; every change reruns the forecast and recommendations instantly.</p>
+ <div class="row"><label>Moving-average window <select id="win" onchange="S.win=+this.value;render()"><option>3</option><option>5</option><option selected>7</option></select></label>
+ <label>Safety buffer % <input type="number" id="buf" min="0" max="100" value="20" style="width:70px" onchange="S.buf=Math.max(0,Math.min(100,+this.value||0));render()"></label></div>
+ <div class="row"><button onclick="delLast()">Remove latest day</button><button onclick="clearAll()">Clear all sales (test warnings)</button><button class="pri" onclick="resetDemo()">Reset sample data</button></div></div>
+ <div class="card sc"><h2>Current inventory</h2><div id="stockEd"></div></div>
+ <div class="card sc"><h2>Edit sales history</h2><div id="histEd"></div></div>
+ <div class="card"><h2>Live result</h2><div id="liveRes"></div></div>
+</section>
+</main>
+<script>
+const ITEMS=['Iced Coffee','Croissant','Sandwich'];
+const REC={'Iced Coffee':{'Coffee beans':20,'Milk':200},'Croissant':{'Croissant stock':1},'Sandwich':{'Bread slices':2,'Filling portions':1}};
+const UNIT={'Coffee beans':'g','Milk':'ml','Croissant stock':'pcs','Bread slices':'slices','Filling portions':'portions'};
+const DEMO={'Iced Coffee':[36,38,41,39,44,48,45,37,40,42,38,46,49,43],'Croissant':[28,30,27,31,35,38,33,29,26,30,28,34,37,32],'Sandwich':[18,20,19,22,21,25,23,17,19,20,18,24,26,22]};
+const DEMOSTOCK={'Coffee beans':900,'Milk':7000,'Croissant stock':40,'Bread slices':50,'Filling portions':30};
+const TABS=[['dash','Dashboard'],['data','Sales data'],['fc','Forecast'],['inv','Inventory'],['rec','AI checklist'],['test','Testing mode']];
+let S,tab='dash',sel='Iced Coffee';
+const ds=i=>{const d=new Date(Date.UTC(2026,9,16+i));return d.toISOString().slice(0,10)};
+function init(){S={win:7,buf:20,demo:true,stock:{...DEMOSTOCK},days:DEMO['Iced Coffee'].map((_,i)=>({d:ds(i),q:Object.fromEntries(ITEMS.map(k=>[k,DEMO[k][i]]))}))}}
+const vals=k=>S.days.map(x=>x.q[k]);
+const mean=a=>a.reduce((s,v)=>s+v,0)/a.length;
+function fc(k){const v=vals(k),n=S.win;if(v.length<3)return{ok:false};const use=Math.min(n,v.length);return{ok:true,v:Math.round(mean(v.slice(-use))),raw:mean(v.slice(-use)),use,short:v.length<n}}
+function bt(k){const v=vals(k),n=S.win,e=[],p=[],pr=[];for(let t=n;t<v.length;t++){const f=mean(v.slice(t-n,t));pr.push([t,f]);e.push(Math.abs(v[t]-f));if(v[t]>0)p.push(Math.abs(v[t]-f)/v[t])}
+ return{n:e.length,mae:e.length?mean(e):null,mape:p.length?mean(p)*100:null,pr}}
+function inv(){const need={};Object.keys(UNIT).forEach(i=>need[i]=0);let ok=true;
+ ITEMS.forEach(k=>{const f=fc(k);if(!f.ok){ok=false;return}for(const i in REC[k])need[i]+=f.v*REC[k][i]});
+ return Object.keys(UNIT).map(i=>{const n=need[i],s=S.stock[i],t=Math.ceil(n*(1+S.buf/100));let st='Sufficient';if(!ok)st='n/a';else if(s<n)st='Shortage';else if(s<t)st='Low';
+  return{i,u:UNIT[i],need:n,stock:s,target:t,st,rep:ok&&st!=='Sufficient'?t-s:0,cov:n?s/n:null}})}
+function recs(){const out=[],warn=[];
+ ITEMS.forEach(k=>{const f=fc(k);if(!f.ok)warn.push('Not enough history for '+k+' (need at least 3 days). No recommendation generated.');else{out.push('Prepare '+f.v+' servings of '+k.toLowerCase()+'.');if(f.short)warn.push(k+': fewer than '+S.win+' days of history; the forecast uses only '+f.use+' days and is less reliable.')}});
+ inv().forEach(r=>{if(r.st==='Shortage')out.push('Replenish '+r.i.toLowerCase()+': short by '+(r.need-r.stock)+' '+r.u+'; order about '+r.rep+' '+r.u+' to reach the target level.');else if(r.st==='Low')out.push('Check '+r.i.toLowerCase()+' before opening: stock is below the safety-buffer target (suggested top-up '+r.rep+' '+r.u+').')});
+ out.push('Review the forecasts against any promotions, holidays, or events today before final prep.');return{out,warn}}
+function chart(k){const v=vals(k),f=fc(k),b=bt(k),W=640,H=230,m=34,n=v.length+1;if(!v.length)return'<p class="mu">No data.</p>';
+ const mx=Math.max(...v,f.ok?f.v:0)*1.15||1,X=i=>m+i*(W-m-12)/Math.max(n-1,1),Y=y=>H-26-y*(H-46)/mx;
+ let s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Sales history and forecast for '+k+'"><g stroke="currentColor" opacity=".15">';
+ for(let i=0;i<=4;i++){const y=Y(mx*i/4);s+='<line x1="'+m+'" x2="'+(W-8)+'" y1="'+y+'" y2="'+y+'"/>'}s+='</g><g fill="currentColor" font-size="10" opacity=".6">';
+ for(let i=0;i<=4;i++)s+='<text x="2" y="'+(Y(mx*i/4)+3)+'">'+Math.round(mx*i/4)+'</text>';
+ v.forEach((_,i)=>{if(i%2==0)s+='<text x="'+(X(i)-12)+'" y="'+(H-8)+'">'+S.days[i].d.slice(5)+'</text>'});s+='</g>';
+ s+='<polyline fill="none" stroke="var(--ac)" stroke-width="2.5" points="'+v.map((y,i)=>X(i)+','+Y(y)).join(' ')+'"/>';
+ if(b.pr.length)s+='<polyline fill="none" stroke="var(--lo)" stroke-width="1.5" stroke-dasharray="2 3" points="'+b.pr.map(p=>X(p[0])+','+Y(p[1])).join(' ')+'"/>';
+ v.forEach((y,i)=>s+='<circle cx="'+X(i)+'" cy="'+Y(y)+'" r="3" fill="var(--ac)"/>');
+ if(f.ok){s+='<line x1="'+X(v.length-1)+'" y1="'+Y(v[v.length-1])+'" x2="'+X(v.length)+'" y2="'+Y(f.v)+'" stroke="var(--bad)" stroke-dasharray="5 4"/><circle cx="'+X(v.length)+'" cy="'+Y(f.v)+'" r="6" fill="var(--bad)"/><text x="'+(X(v.length)-26)+'" y="'+(Y(f.v)-10)+'" fill="var(--bad)" font-size="11">Forecast '+f.v+'</text>'}
+ return s+'</svg><small class="mu"><span style="color:var(--ac)">●</span> actual sales &nbsp;<span style="color:var(--lo)">┄</span> backtest moving average &nbsp;<span style="color:var(--bad)">●</span> next-day forecast</small>'}
+const tg=s=>'<span class="tag '+s+'">'+s+'</span>';
+function render(){
+ document.getElementById('nav').innerHTML=TABS.map(t=>'<button class="'+(tab==t[0]?'on':'')+'" onclick="go(\''+t[0]+'\')">'+t[1]+'</button>').join('');
+ TABS.forEach(t=>document.getElementById('s-'+t[0]).classList.toggle('show',tab==t[0]));
+ document.getElementById('demoTag').style.display=S.demo?'inline-block':'none';
+ document.getElementById('win').value=S.win;document.getElementById('buf').value=S.buf;
+ const I=inv(),R=recs(),last=S.days[S.days.length-1],tot=S.days.reduce((a,x)=>a+ITEMS.reduce((s,k)=>s+x.q[k],0),0),pred=ITEMS.map(k=>fc(k));
+ const alerts=I.filter(r=>r.st==='Low'||r.st==='Shortage');
+ document.getElementById('s-dash').innerHTML='<div class="grid"><div class="card"><small>Total servings sold ('+S.days.length+' days)</small><div class="big">'+tot+'</div></div>'+
+  '<div class="card"><small>Predicted servings, next day</small><div class="big">'+(pred.every(p=>p.ok)?pred.reduce((s,p)=>s+p.v,0):'–')+'</div></div>'+
+  '<div class="card"><small>Low-stock alerts</small><div class="big" style="color:'+(alerts.length?'var(--bad)':'var(--ok)')+'">'+alerts.length+'</div></div>'+
+  '<div class="card"><small>Latest day</small><div class="big" style="font-size:20px">'+(last?last.d:'–')+'</div></div></div>'+
+  (R.warn.map(w=>'<div class="warn">⚠ '+w+'</div>').join(''))+
+  '<div class="card"><h2>Next-day demand by item</h2>'+ITEMS.map((k,i)=>'<div class="row"><b style="width:100px">'+k+'</b><span>'+(pred[i].ok?pred[i].v+' servings':'insufficient data')+'</span></div>').join('')+'</div>'+
+  '<div class="card"><h2>Inventory status</h2>'+I.map(r=>'<div class="row"><span style="width:130px">'+r.i+'</span><div class="bar" style="flex:1;min-width:80px"><i style="width:'+Math.min(100,(r.cov||0)*100)+'%;background:var(--'+(r.st==='Shortage'?'bad':r.st==='Low'?'lo':'ok')+')"></i></div>'+tg(r.st)+'</div>').join('')+'</div>'+
+  '<div class="card"><h2>Sales trend – '+sel+'</h2>'+chart(sel)+'</div>';
+ document.getElementById('fi').innerHTML=ITEMS.map(k=>'<label>'+k+' <input type="number" min="0" step="1" style="width:70px" id="q-'+k.replace(' ','')+'"></label>').join(' ');
+ document.getElementById('hist').innerHTML=histTable(false);
+ document.getElementById('histEd').innerHTML=histTable(true);
+ document.getElementById('s-fc').innerHTML='<div class="card"><h2>Moving-average forecast</h2><div class="row">'+ITEMS.map(k=>'<button class="'+(sel==k?'on':'')+'" onclick="sel=\''+k+'\';render()">'+k+'</button>').join('')+'</div>'+chart(sel)+
+  '<p><b>How it is calculated.</b> Forecast = average of the last '+S.win+' days of sales for the item, rounded to a whole serving. Example for '+sel+': '+(fc(sel).ok?'('+vals(sel).slice(-fc(sel).use).join(' + ')+') ÷ '+fc(sel).use+' = '+fc(sel).raw.toFixed(2)+' → '+fc(sel).v+' servings.':'not enough data.')+'</p>'+
+  (fc(sel).short?'<div class="warn">⚠ Fewer than '+S.win+' days of history; forecast uses only '+fc(sel).use+' days.</div>':'')+(!fc(sel).ok?'<div class="warn err">⚠ Insufficient history: at least 3 days are required.</div>':'')+
+  '<div class="warn">Limitation: a moving average lags behind promotions, holidays, weather and seasonal shifts. Treat it as a baseline and adjust manually.</div></div>'+
+  '<div class="card sc"><h2>Backtest accuracy (window '+S.win+')</h2><table><tr><th>Item</th><th>Days tested</th><th>MAE</th><th>MAPE</th></tr>'+ITEMS.map(k=>{const b=bt(k);return'<tr><td>'+k+'</td><td>'+b.n+'</td><td>'+(b.mae==null?'n/a (need > '+S.win+' days)':b.mae.toFixed(2))+'</td><td>'+(b.mape==null?'n/a':b.mape.toFixed(1)+'%')+'</td></tr>'}).join('')+'</table><small class="mu">Computed on the data currently loaded (rolling one-day-ahead). With demo data these are illustrative, not real-world accuracy.</small></div>';
+ document.getElementById('s-inv').innerHTML='<div class="card"><h2>Recipe quantities per serving</h2>'+ITEMS.map(k=>'<div><b>'+k+':</b> '+Object.entries(REC[k]).map(([i,q])=>q+' '+UNIT[i]+' '+i.toLowerCase()).join(', ')+'</div>').join('')+'</div>'+invTable(I);
+ document.getElementById('s-rec').innerHTML='<div class="card"><h2>Daily checklist</h2>'+R.warn.map(w=>'<div class="warn">⚠ '+w+'</div>').join('')+'<ul style="list-style:none;padding:0">'+R.out.map((t,i)=>'<li><label><input type="checkbox"> '+t+'</label></li>').join('')+'</ul><small class="mu">Generated by a rule-based engine from the calculated numbers. Gemini-based natural-language generation is a planned enhancement and is not implemented.</small></div>';
+ document.getElementById('stockEd').innerHTML='<table><tr><th>Ingredient</th><th>Stock</th><th>Unit</th></tr>'+Object.keys(UNIT).map(i=>'<tr><td>'+i+'</td><td><input type="number" min="0" value="'+S.stock[i]+'" onchange="setStock(\''+i+'\',this.value)"></td><td>'+UNIT[i]+'</td></tr>').join('')+'</table>';
+ document.getElementById('liveRes').innerHTML='<p><b>Forecast:</b> '+ITEMS.map((k,i)=>k+' '+(pred[i].ok?pred[i].v:'n/a')).join(' · ')+'</p>'+invTable(I)+'<ul>'+R.out.map(t=>'<li>'+t+'</li>').join('')+'</ul>'+R.warn.map(w=>'<div class="warn">⚠ '+w+'</div>').join('');
+}
+function invTable(I){return'<div class="card sc"><h2>Required vs. current stock (buffer '+S.buf+'%)</h2><table><tr><th>Ingredient</th><th>Required</th><th>In stock</th><th>Target</th><th>Status</th><th>Suggested order</th></tr>'+I.map(r=>'<tr><td>'+r.i+'</td><td>'+r.need+' '+r.u+'</td><td>'+r.stock+' '+r.u+'</td><td>'+r.target+' '+r.u+'</td><td>'+(r.st==='n/a'?'n/a':tg(r.st))+'</td><td>'+(r.rep?r.rep+' '+r.u:'–')+'</td></tr>').join('')+'</table></div>'}
+function histTable(ed){return'<table><tr><th>Date</th>'+ITEMS.map(k=>'<th>'+k+'</th>').join('')+'</tr>'+S.days.map((x,r)=>'<tr><td>'+x.d+'</td>'+ITEMS.map(k=>'<td>'+(ed?'<input type="number" min="0" value="'+x.q[k]+'" onchange="setQ('+r+',\''+k+'\',this.value)">':x.q[k])+'</td>').join('')+'</tr>').join('')+'</table>'}
+function go(t){tab=t;render()}
+function say(m,c){document.getElementById('msg').innerHTML='<div class="warn '+c+'">'+m+'</div>'}
+const valid=v=>v!==''&&v!=null&&Number.isFinite(+v)&&+v>=0&&Number.isInteger(+v);
+function addDay(){const d=document.getElementById('fd').value;if(!d)return say('Please choose a date.','err');
+ const q={};for(const k of ITEMS){const v=document.getElementById('q-'+k.replace(' ','')).value;if(!valid(v))return say('Invalid quantity for '+k+': enter a whole number ≥ 0.','err');q[k]=+v}
+ upsert(d,q);S.demo=true;render();say('Saved '+d+'.','okm')}
+function upsert(d,q){const e=S.days.find(x=>x.d===d);if(e)Object.assign(e.q,q);else S.days.push({d,q:{'Iced Coffee':0,'Croissant':0,'Sandwich':0,...q}});S.days.sort((a,b)=>a.d<b.d?-1:1)}
+function setQ(r,k,v){if(!valid(v)){render();return}S.days[r].q[k]=+v;render()}
+function setStock(i,v){if(!valid(v)){render();return}S.stock[i]=+v;render()}
+function delLast(){S.days.pop();render()}function clearAll(){S.days=[];render()}
+function resetDemo(){init();render()}
+function sampleCSV(){document.getElementById('ex').textContent='date,item,quantity\n2026-10-30,Iced Coffee,44\n2026-10-30,Croissant,31\n2026-10-30,Sandwich,21'}
+document.getElementById('csv').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{importCSV(String(r.result))}catch(x){say('Could not read file.','err')}};r.readAsText(f)});
+function importCSV(t){const L=t.trim().split(/\r?\n/).map(l=>l.split(',').map(c=>c.trim()));if(L.length<2)return say('CSV is empty or has no data rows.','err');
+ const h=L[0].map(c=>c.toLowerCase()),long=h.includes('item'),bad=[];let n=0;
+ if(long){const di=h.indexOf('date'),ii=h.indexOf('item'),qi=h.findIndex(c=>c.startsWith('quant')||c==='qty');if(di<0||qi<0)return say('Missing required columns: date, item, quantity.','err');
+  L.slice(1).forEach((c,i)=>{const it=ITEMS.find(k=>k.toLowerCase()===(c[ii]||'').toLowerCase());if(!c[di]||!it||!valid(c[qi]))return bad.push(i+2);upsert(c[di],{[it]:+c[qi]});n++})}
+ else{const idx=ITEMS.map(k=>h.indexOf(k.toLowerCase()));if(h[0]!=='date'||idx.some(i=>i<0))return say('Wide format needs columns: date, '+ITEMS.join(', ')+'.','err');
+  L.slice(1).forEach((c,i)=>{if(!c[0]||idx.some(j=>!valid(c[j])))return bad.push(i+2);const q={};ITEMS.forEach((k,j)=>q[k]=+c[idx[j]]);upsert(c[0],q);n++})}
+ S.demo=true;render();say('Imported '+n+' valid row(s).'+(bad.length?' Skipped invalid rows: '+bad.slice(0,10).join(', ')+'.':''),bad.length?'':'okm')}
+init();render();
+</script></body></html>
